@@ -1,0 +1,60 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Helper function to check if user is authenticated
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function getUserData() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isRole(role) {
+      return isSignedIn() && getUserData().role == role;
+    }
+
+    function isAdmin()     { return isRole('admin'); }
+    function isCommittee() { return isRole('committee'); }
+    function isFaculty()   { return isRole('faculty'); }
+
+    // Helper to check if this studentUID belongs to the current user
+    function isStudentOwner(studentUID) {
+      return isSignedIn() && getUserData().studentUID == studentUID;
+    }
+
+    // Documents storage - Students upload, Faculty/Committee/Admin can view
+    match /students/{studentUID}/documents/{fileName} {
+      allow read: if isSignedIn() && (isStudentOwner(studentUID) || isAdmin() || isCommittee() || isFaculty());
+      allow write: if isSignedIn() && isStudentOwner(studentUID);
+      allow delete: if isSignedIn() && (isStudentOwner(studentUID) || isAdmin());
+    }
+    
+    // Grievance proof documents
+    match /grievance_proofs/{grievanceId}/{fileName} {
+      allow read: if isSignedIn() && (
+        isAdmin() || 
+        isCommittee() || 
+        isFaculty() || 
+        firestore.get(/databases/(default)/documents/grievances/$(grievanceId)).data.userId == request.auth.uid
+      );
+      // Only the person filing the grievance (recorded at the path) can upload
+      allow write: if isSignedIn(); 
+    }
+    
+    // Profile Photos - Users can upload their own, everyone can view
+    match /profile_photos/{userId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Public/General bucket access (if any)
+    match /public/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}
+
